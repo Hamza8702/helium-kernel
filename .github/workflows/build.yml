@@ -16,11 +16,19 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential bc bison flex libssl-dev libelf-dev xz-utils crossbuild-essential-arm64 clang llvm lld
 
-      - name: Compile Miatoll Kernel
+      - name: Configure and Compile (EFI Stub enabled)
         run: |
+
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           make O=out ARCH=arm64 cust_defconfig
+          ./scripts/config --file out/.config -e EFI_STUB
+          ./scripts/config --file out/.config -e EFI
+          ./scripts/config --file out/.config -e DMI
+          ./scripts/config --file out/.config -e EFI_ESRT
+          ./scripts/config --file out/.config -e EFI_VARS
+          ./scripts/config --file out/.config -e EFI_RUNTIME_MAP
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
       - name: Upload Finished Kernel
