@@ -1,38 +1,76 @@
-name: Build Helium Kernel (Miatoll)
+name: Build Xiaomi ARM64 Kernel (EFI Stub Enabled)
 
 on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build:
+  kernel-build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Setup Build Environment
+      - name: Install Build Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y build-essential bc bison flex libssl-dev libelf-dev xz-utils crossbuild-essential-arm64 clang llvm lld
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            python3 python3-dev git zip unzip libncurses-dev
 
-      - name: Configure and Compile (EFI Stub enabled)
+      - name: Patch Python 2 Syntax (Fix print >> sys.stderr)
         run: |
+          # Fixing the specific error in gcc-wrapper.py
+          if [ -f scripts/gcc-wrapper.py ]; then
+            sed -i 's/print >> sys.stderr, line,/print(line, file=sys.stderr, end="")/g' scripts/gcc-wrapper.py
+          fi
+          # General fix for other Python 2 print statements in scripts/
+          find scripts/ -type f -name "*.py" -exec sed -i 's/print "\(.*\)"/print("\1")/g' {} +
 
+      - name: Setup Kernel Configuration
+        run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          mkdir -p out
+          # Replace 'miatoll_defconfig' with your actual config file name
           make O=out ARCH=arm64 cust_defconfig
-          ./scripts/config --file out/.config -e EFI_STUB
-          ./scripts/config --file out/.config -e EFI
-          ./scripts/config --file out/.config -e DMI
-          ./scripts/config --file out/.config -e EFI_ESRT
-          ./scripts/config --file out/.config -e EFI_VARS
-          ./scripts/config --file out/.config -e EFI_RUNTIME_MAP
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-          make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
-      - name: Upload Finished Kernel
+      - name: Enable EFI Stub Support
+        run: |
+          # Force enabling EFI variables for mobile bootloaders
+          ./scripts/config --file out/.config --enable EFI_STUB
+          ./scripts/config --file out/.config --enable EFI
+          ./scripts/config --file out/.config --enable DMI
+          ./scripts/config --file out/.config --enable KVM
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Compile Kernel
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out ARCH=arm64 -j$(nproc) \
+            KBUILD_BUILD_USER=Gemini \
+            KBUILD_BUILD_HOST=GitHub-CI
+
+      - name: Verify and Prepare Artifacts
+        run: |
+          if [ -f out/arch/arm64/boot/Image ]; then
+            echo "Kernel built successfully!"
+            cp out/arch/arm64/boot/Image out/vmlinuz.efi
+          else
+            echo "Kernel build failed!"
+            exit 1
+          fi
+
+      - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: Helium-Kernel-Image
-          path: out/arch/arm64/boot/Image.gz
+          name: kernel-efi-output
+          path: |
+            out/vmlinuz.efi
+            out/arch/arm64/boot/Image
+            out/.config
+
